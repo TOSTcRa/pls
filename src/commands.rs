@@ -27,13 +27,19 @@ pub async fn cmd_install(package_input: &str) -> Result<(), String> {
     fs::create_dir_all(format!("{}/usr/bin", ROOT))
         .map_err(|e| format!("couldn't create bin dir: {}", e))?;
 
-    let status = Command::new("cp")
-        .args(["-r", &format!("{}/bin/.", temp_dir), &format!("{}/usr/bin/", ROOT)])
-        .status()
-        .map_err(|e| format!("copy failed: {}", e))?;
+    let bin_dir = format!("{}/bin", temp_dir);
+    let entries = fs::read_dir(&bin_dir)
+        .map_err(|e| format!("couldn't read bin dir: {}", e))?;
 
-    if !status.success() {
-        return Err("couldn't copy files, check permissions maybe?".to_string());
+    for entry in entries.flatten() {
+        let src = entry.path();
+        if src.is_file() {
+            let filename = entry.file_name();
+            let dest = format!("{}/usr/bin/{}", ROOT, filename.to_string_lossy());
+            let _ = fs::remove_file(&dest);
+            fs::copy(&src, &dest)
+                .map_err(|e| format!("couldn't copy {}: {}", filename.to_string_lossy(), e))?;
+        }
     }
 
     let db_path = format!("{}/{}", DB_DIR, pkg.name);

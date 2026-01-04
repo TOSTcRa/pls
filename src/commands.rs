@@ -379,6 +379,75 @@ pub fn cmd_repo_update() -> Result<(), String> {
     Ok(())
 }
 
+pub async fn cmd_update() -> Result<(), String> {
+    if !Path::new(DB_DIR).exists() {
+        println!("nothing installed yet, nothing to update");
+        return Ok(());
+    }
+
+    println!("checking for updates...");
+
+    let index = fetch_index().await?;
+
+    let entries = fs::read_dir(DB_DIR).map_err(|_| "couldn't read package database")?;
+
+    let mut installed: Vec<(String, String)> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let info_path = format!("{}/{}/info", DB_DIR, name);
+        if let Ok(pkg) = PackageInfo::from_file(&info_path) {
+            installed.push((pkg.name, pkg.version));
+        }
+    }
+
+    if installed.is_empty() {
+        println!("nothing installed yet");
+        return Ok(());
+    }
+
+    let mut to_update: Vec<String> = Vec::new();
+
+    for (name, local_version) in &installed {
+        if let Some(remote) = index.packages.get(name) {
+            if remote.version != *local_version {
+                println!("  {} {} -> {}", name, local_version, remote.version);
+                to_update.push(name.clone());
+            }
+        }
+    }
+
+    if to_update.is_empty() {
+        println!("everything up to date!");
+        return Ok(());
+    }
+
+    println!("\nupdating {} package(s)...\n", to_update.len());
+
+    let mut updated = 0;
+    let mut failed: Vec<String> = Vec::new();
+
+    for pkg in &to_update {
+        println!(">>> updating {}...", pkg);
+        match cmd_install(pkg).await {
+            Ok(_) => updated += 1,
+            Err(e) => {
+                println!("!!! failed to update {}: {}", pkg, e);
+                failed.push(pkg.clone());
+            }
+        }
+        println!();
+    }
+
+    if failed.is_empty() {
+        println!("nice! {} package(s) updated", updated);
+    } else {
+        println!("{} updated, {} failed", updated, failed.len());
+        println!("failed: {}", failed.join(", "));
+    }
+
+    Ok(())
+}
+
 pub async fn cmd_bundle(bundle_name: &str) -> Result<(), String> {
     println!("checking repo for bundle '{}'...", bundle_name);
 

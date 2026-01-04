@@ -21,6 +21,7 @@ fn print_help() {
     println!("  remove <pkg>      remove a package");
     println!("  info <pkg>        show package info");
     println!("  list              list installed packages");
+    println!("  update            update all installed packages");
     println!("  add <path>        create package from project");
     println!("    --draft         use debug build instead of release");
     println!("    --output <dir>  output to custom directory");
@@ -77,6 +78,7 @@ async fn main() {
             }
         }
         "list" | "ls" => commands::cmd_list(),
+        "update" => commands::cmd_update().await,
         "add" => {
             let path = if args.len() >= 3 && !args[2].starts_with('-') {
                 &args[2]

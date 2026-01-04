@@ -5,7 +5,6 @@ use std::io::{self, Read};
 use std::path::Path;
 use tar::Archive;
 
-use crate::PACKAGES_DIR;
 use crate::DB_DIR;
 
 pub fn extract_package(archive_path: &str, dest: &str) -> io::Result<()> {
@@ -34,12 +33,6 @@ pub fn resolve_package_path(input: &str) -> Option<String> {
         if Path::new(input).exists() {
             return Some(input.to_string());
         }
-        return None;
-    }
-
-    let repo_path = format!("{}/{}.pls", PACKAGES_DIR, input);
-    if Path::new(&repo_path).exists() {
-        return Some(repo_path);
     }
     None
 }

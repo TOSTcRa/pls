@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{self, Command};
 
 use crate::types::RepoIndex;
-use crate::utils::{create_package, resolve_package_path};
+use crate::utils::{calculate_sha256, create_package, resolve_package_path};
 use crate::{CACHE_DIR, REPO_URL};
 
 pub async fn fetch_index() -> Result<RepoIndex, String> {
@@ -35,16 +35,17 @@ pub async fn download_deb(url: &str, name: &str) -> Result<String, String> {
 
     let bytes = res.bytes().await.map_err(|e| e.to_string())?;
 
-    let deb_dir = "/tmp/pls-deb";
-    let _ = fs::remove_dir_all(deb_dir);
-    fs::create_dir_all(deb_dir).map_err(|e| e.to_string())?;
+    let pid = process::id();
+    let deb_dir = format!("/tmp/pls-deb-{}", pid);
+    let _ = fs::remove_dir_all(&deb_dir);
+    fs::create_dir_all(&deb_dir).map_err(|e| e.to_string())?;
 
-    let deb_path = format!("{}/package.deb", deb_dir);
+    let deb_path = format!("{}/package.deb", &deb_dir);
     fs::write(&deb_path, &bytes).map_err(|e| e.to_string())?;
 
     let status = Command::new("ar")
         .args(["x", &deb_path])
-        .current_dir(deb_dir)
+        .current_dir(&deb_dir)
         .status()
         .map_err(|_| "ar not found, install binutils")?;
 
@@ -52,17 +53,17 @@ pub async fn download_deb(url: &str, name: &str) -> Result<String, String> {
         return Err("failed to extract .deb".to_string());
     }
 
-    let data_tar = if Path::new(&format!("{}/data.tar.xz", deb_dir)).exists() {
-        format!("{}/data.tar.xz", deb_dir)
-    } else if Path::new(&format!("{}/data.tar.zst", deb_dir)).exists() {
-        format!("{}/data.tar.zst", deb_dir)
-    } else if Path::new(&format!("{}/data.tar.gz", deb_dir)).exists() {
-        format!("{}/data.tar.gz", deb_dir)
+    let data_tar = if Path::new(&format!("{}/data.tar.xz", &deb_dir)).exists() {
+        format!("{}/data.tar.xz", &deb_dir)
+    } else if Path::new(&format!("{}/data.tar.zst", &deb_dir)).exists() {
+        format!("{}/data.tar.zst", &deb_dir)
+    } else if Path::new(&format!("{}/data.tar.gz", &deb_dir)).exists() {
+        format!("{}/data.tar.gz", &deb_dir)
     } else {
         return Err("couldn't find data.tar in .deb".to_string());
     };
 
-    let extract_dir = format!("{}/extract", deb_dir);
+    let extract_dir = format!("{}/extract", &deb_dir);
     fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
 
     let status = Command::new("tar")
@@ -74,9 +75,9 @@ pub async fn download_deb(url: &str, name: &str) -> Result<String, String> {
         return Err("failed to extract data.tar".to_string());
     }
 
-    let build_dir = "/tmp/pls-deb-build";
-    let _ = fs::remove_dir_all(build_dir);
-    fs::create_dir_all(format!("{}/bin", build_dir)).map_err(|e| e.to_string())?;
+    let build_dir = format!("/tmp/pls-deb-build-{}", pid);
+    let _ = fs::remove_dir_all(&build_dir);
+    fs::create_dir_all(format!("{}/bin", &build_dir)).map_err(|e| e.to_string())?;
 
     let bin_dirs = [
         format!("{}/usr/bin", extract_dir),
@@ -91,7 +92,7 @@ pub async fn download_deb(url: &str, name: &str) -> Result<String, String> {
                 for entry in entries.flatten() {
                     let src = entry.path();
                     if src.is_file() {
-                        let dest = format!("{}/bin/{}", build_dir, entry.file_name().to_string_lossy());
+                        let dest = format!("{}/bin/{}", &build_dir, entry.file_name().to_string_lossy());
                         let _ = fs::copy(&src, &dest);
                         found_binary = true;
                     }
@@ -105,14 +106,14 @@ pub async fn download_deb(url: &str, name: &str) -> Result<String, String> {
     }
 
     let info_content = format!("name = {}\nversion = 1.0.0\n", name);
-    fs::write(format!("{}/info", build_dir), info_content).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/info", &build_dir), info_content).map_err(|e| e.to_string())?;
 
     fs::create_dir_all(CACHE_DIR).map_err(|e| e.to_string())?;
     let pls_path = format!("{}/{}.pls", CACHE_DIR, name);
-    create_package(build_dir, &pls_path).map_err(|e| e.to_string())?;
+    create_package(&build_dir, &pls_path).map_err(|e| e.to_string())?;
 
-    let _ = fs::remove_dir_all(deb_dir);
-    let _ = fs::remove_dir_all(build_dir);
+    let _ = fs::remove_dir_all(&deb_dir);
+    let _ = fs::remove_dir_all(&build_dir);
 
     println!("converted deb to pls!");
     Ok(pls_path)
@@ -139,7 +140,18 @@ pub async fn resolve_or_download(name: &str) -> Result<String, String> {
     println!("lemme check the repo...");
     let index = fetch_index().await?;
 
-    if index.packages.contains_key(name) {
+    if let Some(pkg_meta) = index.packages.get(name) {
+        let cache_path = format!("{}/{}.pls", CACHE_DIR, name);
+
+        if Path::new(&cache_path).exists() {
+            if let Ok(local_sha) = calculate_sha256(&cache_path) {
+                if local_sha == pkg_meta.sha256 {
+                    println!("using cached {}...", name);
+                    return Ok(cache_path);
+                }
+            }
+        }
+
         println!("downloading {}...", name);
         return download_package(name).await;
     }

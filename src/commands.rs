@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{self, Command};
 
 use crate::network::{fetch_index, resolve_or_download};
 use crate::types::{PackageInfo, PackageMeta, RepoIndex};
@@ -12,12 +12,12 @@ use crate::{DB_DIR, PACKAGES_DIR, ROOT};
 pub async fn cmd_install(package_input: &str) -> Result<(), String> {
     let package_path = resolve_or_download(package_input).await?;
 
-    let temp_dir = "/tmp/pls-extract";
+    let temp_dir = format!("/tmp/pls-extract-{}", process::id());
 
-    extract_package(&package_path, temp_dir)
+    extract_package(&package_path, &temp_dir)
         .map_err(|e| format!("couldn't unpack that thing: {}", e))?;
 
-    let pkg = PackageInfo::from_file(&format!("{}/info", temp_dir))
+    let pkg = PackageInfo::from_file(&format!("{}/info", &temp_dir))
         .map_err(|_| "package seems broken, no info file found")?;
 
     if is_installed(&pkg.name) {
@@ -47,7 +47,7 @@ pub async fn cmd_install(package_input: &str) -> Result<(), String> {
     fs::copy(format!("{}/info", temp_dir), format!("{}/info", db_path))
         .map_err(|e| format!("couldn't save package info: {}", e))?;
 
-    let _ = fs::remove_dir_all(temp_dir);
+    let _ = fs::remove_dir_all(&temp_dir);
 
     println!("got ya! {} v{} installed", pkg.name, pkg.version);
     Ok(())
@@ -74,10 +74,10 @@ pub fn cmd_info(package_input: &str) -> Result<(), String> {
     let package_path = crate::utils::resolve_package_path(package_input)
         .ok_or_else(|| format!("couldn't find '{}'", package_input))?;
 
-    let temp_dir = "/tmp/pls-info";
-    extract_package(&package_path, temp_dir).map_err(|e| format!("couldn't unpack: {}", e))?;
+    let temp_dir = format!("/tmp/pls-info-{}", process::id());
+    extract_package(&package_path, &temp_dir).map_err(|e| format!("couldn't unpack: {}", e))?;
 
-    let pkg = PackageInfo::from_file(&format!("{}/info", temp_dir))
+    let pkg = PackageInfo::from_file(&format!("{}/info", &temp_dir))
         .map_err(|_| "no info file in package")?;
 
     println!("name: {}", pkg.name);
@@ -86,7 +86,7 @@ pub fn cmd_info(package_input: &str) -> Result<(), String> {
         println!("depends: {}", pkg.depend.join(", "));
     }
 
-    let _ = fs::remove_dir_all(temp_dir);
+    let _ = fs::remove_dir_all(&temp_dir);
     Ok(())
 }
 
@@ -315,7 +315,7 @@ pub fn cmd_repo_update() -> Result<(), String> {
     println!("scanning packages/...");
 
     let mut packages: HashMap<String, PackageMeta> = HashMap::new();
-    let temp_dir = "/tmp/pls-repo-scan";
+    let temp_dir = format!("/tmp/pls-repo-scan-{}", process::id());
 
     let entries = fs::read_dir(&packages_dir)
         .map_err(|e| format!("couldn't read packages/: {}", e))?;
@@ -336,10 +336,10 @@ pub fn cmd_repo_update() -> Result<(), String> {
             .map_err(|e| format!("couldn't get size of {}: {}", path_str, e))?
             .len();
 
-        extract_package(&path_str, temp_dir)
+        extract_package(&path_str, &temp_dir)
             .map_err(|e| format!("couldn't extract {}: {}", path_str, e))?;
 
-        let pkg = PackageInfo::from_file(&format!("{}/info", temp_dir))
+        let pkg = PackageInfo::from_file(&format!("{}/info", &temp_dir))
             .map_err(|e| format!("couldn't read info from {}: {}", path_str, e))?;
 
         println!("  found {} v{} ({} bytes)", pkg.name, pkg.version, size);
@@ -353,7 +353,7 @@ pub fn cmd_repo_update() -> Result<(), String> {
         });
     }
 
-    let _ = fs::remove_dir_all(temp_dir);
+    let _ = fs::remove_dir_all(&temp_dir);
 
     if packages.is_empty() {
         println!("no packages found in packages/");
